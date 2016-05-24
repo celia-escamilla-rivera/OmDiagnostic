@@ -1,0 +1,176 @@
+(*Copyright 2015. C. Escamilla-Rivera. If you do use it, or a modified version of it, please cite the relevant paper*)
+(*Set the file path*)
+SetDirectory[ ""];
+(*** Start: Data information ***)
+dataset = ReadList["Hznewdata.txt", {Number, Number, Number}]; (*This is the list of astrophysical data reported in 1208.3281 *)
+Hsorig = N[#[[2]] & /@ dataset];
+red = N[#[[1]] & /@ dataset];
+ered = N[Last /@ dataset];
+α = 0.9;
+dof = 1.51283;
+l = Length[red];
+n = Ceiling[α*l]; (*Span -> Round up to the nearest integer*)
+eta =
+Table[0.5 + i, {i, 0., 1.5, 0.1}];
+(*Planck 2015*)
+(*H0Spit=74.3; (*To normalize H(z) for h(z)*)SdH0Spit=2.1;*)
+H0Spit = 67.31;
+SdH0Spit = 0.96;
+Hs = Hsorig/H0Spit;
+(*** Task one: Making lists ***)
+redsse[i_] := Sort[Nearest[red, red[[i]], n]]
+listjoin = Partition[Riffle[red, ered], 2];
+redgold[i_] := listjoin[[i]][[2]];
+redsselist = Table[redsse[i], {i, Length[red]}];
+tGen = Table[
+Flatten[
+Table[Position[listjoin[[All, 1]], redsselist[[k]][[j]]], {j, n}]], {k,
+Length[redsselist]}];
+goldbel =
+Table[Table[
+Table[redgold[i], {i, Length[listjoin]}][[tGen[[k]][[j]]]], {j, n}], {k,
+Length[tGen]}];
+listjoin2 = Partition[Riffle[red, Hs], 2];
+goldbel2 =
+Table[Table[
+Table[Hs[[i]], {i, Length[listjoin2]}][[tGen[[k]][[j]]]], {j, n}], {k,
+Length[tGen]}];
+(*listGolds[i_,j_]:=goldbel2[[i]]+goldbel[[i]]*Sqrt[Abs[eta[[j]]]]*)
+listGolds[i_, j_] :=
+goldbel2[[i]] +
+Sqrt[(goldbel[[i]]/H0Spit)^2 + (goldbel2[[i]]^2/H0Spit^2)*SdH0Spit^2]*
+Sqrt[Abs[eta[[j]]]]
+(*k-> redshift position, l-> eta position*)
+funcGold[k_, l_] := Partition[Riffle[redsselist[[k]], listGolds[k, l]], 2]
+(*Table[Sqrt[(goldbel[[i]]/H0Spit)^2+(goldbel2[[i]]^2/H0Spit^2)*SdH0Spit^2],{\
+i,l}]*)
+(*** Task two: implementing Tricube weight ***)
+Absredsse[i_] := Abs[redsse[i] - red[[i]]]
+Tricube[x_] := If[Abs[x] < 1., (1. - Abs[x]^3)^3, 0]
+(*i-> posición del redshift*)
+Goldweight[i_] := Tricube[#] & /@ (Absredsse[i]/Max[Absredsse[i]])
+(*** Task three: Loess***)
+p = 1;
+model = Table[z^m, {m, 0, p}];
+fitGoldeta3bis =
+Table[LinearModelFit[funcGold[#, j], model, z, Weights -> Goldweight[#]] & /@
+Range[l], {j, Length[eta]}];
+Goldbeletabis[i_] := {eta[[#]], fitGoldeta3bis[[#]][[i]][red[[i]]]} & /@
+Range[Length[eta]];
+(*** Task four: SIMEX ***)
+p2 = 2;
+model2 = Table[z^m, {m, 0, p2}];
+(*i-> posición del redshift*)
+Belfit[i_] := LinearModelFit[Goldbeletabis[i], model2, z]
+NBelfit[i_] := Belfit[i][-1]
+(*** Task five: Simex ***)
+ered2 = Sqrt[(ered/H0Spit)^2 + (Hs^2/H0Spit^2)*SdH0Spit^2];
+HsGold[n_] := Hs + (Sqrt[eta[[n]]]*ered2)
+(*n-> eta cases*)
+NfitGoldeta3[j_] := {red[[#]], fitGoldeta3bis[[j]][[#]][red[[#]]]} & /@
+Range[l];
+tablebelle = NfitGoldeta3[#] & /@ Range[Length[eta]];
+Ssquare[n_] := (Total[(HsGold[n] - tablebelle[[n, All]][[All, 2]])^2])/(l -
+dof);
+WTgold = Table[Total[Table[(Goldweight[i])^2, {i, l}][[j]]], {j, l}];
+WmatrixGold =
+Table[Sqrt[WTgold[[j]]*Ssquare[i]], {i, Length[eta]}, {j,
+l}]; (*Ya son sigmas, no varianza*)
+(*k-> eta cases, i-> redshift position*)
+sigmaGold[k_, i_] := {red[[i]], WmatrixGold[[k]][[i]]};
+(*j-> eta cases. h-> redshift position*)
+NfitGoldeta4[j_, h_] := {red[[h]], fitGoldeta3bis[[j]][[h]][red[[h]]]};
+(*h(z) reconstructed values*)
+(*datahnew=MapThread[List,{red,Table[NBelfit[i],{i,l}]}]*)
+datahnew =
+Table[NBelfit[i], {i, l}]
+Export["hdata_recons.txt", datahnew];
+(*h(z) errors reconstructed*)
+tableh = Table[
+tablebelle[[i, All]][[All, 2]] + WmatrixGold[[i]], {i, Length[eta]}];
+FixGoldSdh[i_] := Partition[Riffle[eta, Transpose[tableh][[i]]], 2]
+NFixGoldSdh[i_] := LinearModelFit[FixGoldSdh[i], model2, z][-1]
+(*Table[NFixGoldSdh[i],{i,l}]*)
+dataerf =
+Abs[Table[NBelfit[i], {i, l}] - Table[NFixGoldSdh[i], {i, l}]]
+Export["herf_data.txt", dataerf];
+(*Loess/Simex results*)
+Listh = {red[[#]], NBelfit[#]} & /@ Range[l];
+ListFixhdataGraphOP2 =
+ListPlot[Listh, Frame -> True, Joined -> False,
+FrameLabel -> {"z", "h(z)"},
+LabelStyle -> {18}, RotateLabel -> False, Frame -> True,
+Axes -> False, ImageSize -> {400, 400}, PlotRange -> All,
+PlotStyle -> {AbsolutePointSize[6], Red}];
+H1pGoldsigma[j_, h_] := {red[[h]],
+NfitGoldeta4[j, h][[2]] + sigmaGold[j, h][[2]]}
+H1mGoldsigma[j_, h_] := {red[[h]],
+NfitGoldeta4[j, h][[2]] - sigmaGold[j, h][[2]]}
+H2pGoldsigma[j_, h_] := {red[[h]],
+NfitGoldeta4[j, h][[2]] + 2*sigmaGold[j, h][[2]]}
+H2mGoldsigma[j_, h_] := {red[[h]],
+NfitGoldeta4[j, h][[2]] - 2*sigmaGold[j, h][[2]]}
+(*i-> redshift position*)
+(*Final Plots*)
+listG = Table[H1pGoldsigma[j, i], {j, Length[eta]}, {i, l}];
+FixGoldH1p[i_] := Partition[Riffle[eta, listG[[All, i]][[All, 2]]], 2]
+NFixGoldH1p[i_] := LinearModelFit[FixGoldH1p[i], model2, z][-1]
+ListFixGoldH1p = Partition[Riffle[red, Table[NFixGoldH1p[i], {i, l}]], 2];
+(*Ap=ListPlot[ListFixGoldH1p,Frame-> True,Joined->True]*)
+listG2 = Table[H1mGoldsigma[j, i], {j, Length[eta]}, {i, l}];
+FixGoldH1m[i_] := Partition[Riffle[eta, listG2[[All, i]][[All, 2]]], 2]
+NFixGoldH1m[i_] := LinearModelFit[FixGoldH1m[i], model2, z][-1]
+ListFixGoldH1m = Partition[Riffle[red, Table[NFixGoldH1m[i], {i, l}]], 2];
+(*Ap2=ListPlot[ListFixGoldH1m,Frame-> True,Joined->True]*)
+listG3 = Table[H2pGoldsigma[j, i], {j, Length[eta]}, {i, l}];
+FixGoldH2p[i_] := Partition[Riffle[eta, listG3[[All, i]][[All, 2]]], 2]
+NFixGoldH2p[i_] := LinearModelFit[FixGoldH2p[i], model2, z][-1]
+ListFixGoldH2p = Partition[Riffle[red, Table[NFixGoldH2p[i], {i, l}]], 2];
+(*Ap3=ListPlot[ListFixGoldH2p,Frame-> True,Joined->True]*)
+listG4 = Table[H2mGoldsigma[j, i], {j, Length[eta]}, {i, l}];
+FixGoldH2m[i_] := Partition[Riffle[eta, listG4[[All, i]][[All, 2]]], 2]
+NFixGoldH2m[i_] := LinearModelFit[FixGoldH2m[i], model2, z][-1]
+ListFixGoldH2m = Partition[Riffle[red, Table[NFixGoldH2m[i], {i, l}]], 2];
+(*Ap4=ListPlot[ListFixGoldH2m,Frame-> True,Joined->True]*)
+A1 = ListPlot[{ListFixGoldH1p, ListFixGoldH1m}, Joined -> True,
+Filling -> {1 -> {2}},
+FillingStyle -> Directive[Opacity[0.5], Yellow],
+FrameLabel -> {"z", "h(z)"},
+LabelStyle -> {18}, RotateLabel -> True, Frame -> True,
+Axes -> False, ImageSize -> {400, 400}, PlotRange -> All];
+A2 = ListPlot[{ListFixGoldH2p, ListFixGoldH2m}, Joined -> True,
+Filling -> {1 -> {2}},
+FillingStyle -> Directive[Opacity[0.3], Yellow],
+FrameLabel -> {"z", "h(z)"},
+LabelStyle -> {18}, RotateLabel -> True, Frame -> True,
+Axes -> False, ImageSize -> {400, 400}, PlotRange -> All];
+(*LCDM plot*)
+Om = 0.315; (*Planck 2015*)
+hLCDM = {red[[#]],
+Sqrt[Om*((1 + red)^3 - 1) + 1][[#]]} & /@ Range[l];
+hLCDMplot =
+ListPlot[hLCDM, Frame -> True, Joined -> True, FrameLabel -> {"z", "h(z)"},
+LabelStyle -> {18}, RotateLabel -> True, Frame -> True,
+Axes -> False, ImageSize -> {400, 400}, PlotRange -> All,
+PlotStyle -> {AbsoluteDashing[{6}],
+Darker[Green], Thickness[0.006]}];
+(*GraphGoldFinal=Show[A1,A2,ListFixhdataGraphOP2,hLCDMplot,
+ListPlot[{red[[#]],(Hs/H0Spit)[[#]]}&/@Range[l],
+PlotStyle->{AbsolutePointSize[6],Blue}]]*)
+Needs["ErrorBarPlots`"];
+Listold = Transpose[{red, Hs}];
+Listerrold = Table[ErrorBar[ered[[i]]/H0Spit], {i, l}];
+PlotOriginalSD = ErrorListPlot[Transpose[{Listold, Listerrold}], Frame -> True,
+PlotStyle -> {AbsolutePointSize[6], Blue}, RotateLabel -> True,
+FrameLabel -> {"z", "h(z)"},
+LabelStyle -> {18}, ImageSize -> {400, 400}];
+<< "customlegend`"; (*This package can be download directly from the Mathematical Wolfram website*)
+GraphGoldFinal = Show[{A1, A2, hLCDMplot, PlotOriginalSD, ListFixhdataGraphOP2,
+ListPlot[{red[[#]], NBelfit[#]} & /@ Range[l],
+Joined -> True, PlotStyle -> {AbsolutePointSize[6], Red}]},
+tCustomLegend[{tCustomLegendItem[Point, "this work", PlotStyle -> Red],
+tCustomLegendItem[Line, "Planck ΛCDM",
+PlotStyle -> {Dashed, Thick, Darker[Green]}],
+tCustomLegendItem[Point, "real data", PlotStyle -> Blue]}, {0.5, 3.}]]
+Export["h(z)Loess_recons.pdf", GraphGoldFinal];
+Export["h(z)Loess_recons.m", GraphGoldFinal];
